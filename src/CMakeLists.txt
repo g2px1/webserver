@@ -12,7 +12,7 @@ include_directories(
 
 add_definitions(
         -DDEBUG=0
-        -DDEBUG_HEADERS=1
+        -DDEBUG_HEADERS=0
         -DDEBUG_SSL_HANDSHAKE=0
         -DDEBUG_ON_RECEIVE=0
         -DDEBUG_ON_FRAME=0

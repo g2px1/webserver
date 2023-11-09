@@ -38,10 +38,11 @@ unit::server::callbacks::on_frame_recv_callback(nghttp2_session *session, const 
 #endif
     if (frame->hd.flags == NGHTTP2_FLAG_END_STREAM) {
         int32_t stream_id = frame->hd.stream_id;
-        auto *user_session = static_cast<HttpSession *>(user_data);
-        user_session->setDataFinishedByStream(stream_id, true);
-        auto *res = new unit::server::data::response(R"({"test":"test"})", stream_id);
-        send_response(session, stream_id, res);
+
+//        auto *user_session = static_cast<HttpSession *>(user_data);
+//        user_session->setDataFinishedByStream(stream_id, true);
+//        auto *res = new unit::server::data::response(R"({"test":"test"})", stream_id);
+//        send_response(session, stream_id, res);
 #if DEBUG_HEADERS
         std::cout << "Headers: " << '\n';
         for (auto &[key, value]: *user_session) {
@@ -227,12 +228,7 @@ void HttpSession::pushEmptyUserData(int32_t stream_id) {
     this->full_data.try_emplace(this->full_data.begin(), stream_id, unit::server::data::request(stream_id));
 }
 
-unit::server::data::response::response(const std::string &jsonResponse, size_t readOffset) : json_response(
-        jsonResponse), read_offset(readOffset) {}
-
-void unit::server::data::response::setStreamId(int32_t streamId) {
-    stream_id = streamId;
-}
+unit::server::data::response::response(int32_t stream_id) : stream_id(stream_id) {}
 
 void unit::server::callbacks::send_response(nghttp2_session *session, int32_t stream_id,
                                             unit::server::data::response *data) {
@@ -293,16 +289,6 @@ static ssize_t unit::server::callbacks::send_callback(nghttp2_session *session, 
     auto *session_data = static_cast<HttpSession *>(user_data);
     BOOST_LOG_TRIVIAL(info) << data;
     session_data->ssl_socket->async_write_some(boost::asio::buffer(data, strlen(reinterpret_cast<const char *>(data))), unit::server::callbacks::write_handler);
-//    boost::asio::async_write(session_data->socket_,
-//                             boost::asio::buffer(data, strlen(reinterpret_cast<const char *>(data))),
-//                             [session_data](boost::system::error_code ec, std::size_t /*length*/) {
-//                                 if (!ec) {
-//                                     BOOST_LOG_TRIVIAL(info) << "Response send successfully";
-//                                 } else {
-//                                     // Handle the error, possibly by logging it and closing the session
-//                                     BOOST_LOG_TRIVIAL(error) << ec.what();
-//                                 }
-//                             });
     return (ssize_t) length;
 }
 

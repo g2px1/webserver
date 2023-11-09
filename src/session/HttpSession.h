@@ -42,18 +42,16 @@ namespace unit::server {
             std::unordered_map<std::string, std::string> headers{};
             const int32_t stream_id;
         private:
-        } userData;
+        } request;
 
         typedef struct response {
-            response(const std::string &jsonResponse, size_t readOffset);
+            response(int32_t stream_id);
 
             std::string json_response;
             size_t read_offset = 0;
 
-            void setStreamId(int32_t streamId);
-
         private:
-            int32_t stream_id;
+            const int32_t stream_id;
         } response;
 
     }
