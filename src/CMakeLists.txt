@@ -8,6 +8,7 @@ find_package(OpenSSL REQUIRED)
 
 include_directories(
         utils
+        server
 )
 
 add_definitions(
@@ -28,6 +29,10 @@ add_executable(tcpSocketTest main.cpp
         utils/ssl/CTX_util.h
         session/HttpSessionException.cpp
         session/HttpSessionException.h
+        server/data/HttpRequest.cpp
+        server/data/HttpRequest.h
+        server/data/HttpResponse.cpp
+        server/data/HttpResponse.h
 )
 
 target_link_libraries(${PROJECT_NAME}

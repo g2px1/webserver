@@ -4,11 +4,11 @@
 
 #include "HttpSession.h"
 
-unit::server::data::request::request(bool isFinished, const std::vector<unsigned char> &data, int32_t stream_id)
-        : isFinished(
-        isFinished), data(data), stream_id(stream_id) {}
-
-unit::server::data::request::request(int32_t stream_id) : isFinished(false), stream_id(stream_id) {}
+//unit::server::data::request::request(bool isFinished, const std::vector<unsigned char> &data, int32_t stream_id)
+//        : isFinished(
+//        isFinished), data(data), stream_id(stream_id) {}
+//
+//unit::server::data::request::request(int32_t stream_id) : isFinished(false), stream_id(stream_id) {}
 
 int
 unit::server::callbacks::on_header_callback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name,
@@ -39,10 +39,11 @@ unit::server::callbacks::on_frame_recv_callback(nghttp2_session *session, const 
     if (frame->hd.flags == NGHTTP2_FLAG_END_STREAM) {
         int32_t stream_id = frame->hd.stream_id;
 
-//        auto *user_session = static_cast<HttpSession *>(user_data);
-//        user_session->setDataFinishedByStream(stream_id, true);
-//        auto *res = new unit::server::data::response(R"({"test":"test"})", stream_id);
-//        send_response(session, stream_id, res);
+        auto *user_session = static_cast<HttpSession *>(user_data);
+        user_session->setDataFinishedByStream(stream_id, true);
+        auto *res = new unit::server::data::HttpResponse(stream_id);
+        res->json_response = R"({"test":"test"})";
+        send_response(session, stream_id, res);
 #if DEBUG_HEADERS
         std::cout << "Headers: " << '\n';
         for (auto &[key, value]: *user_session) {
@@ -87,8 +88,10 @@ HttpSession::HttpSession(boost::asio::ip::tcp::socket socket, const std::string 
     nghttp2_session_callbacks_new(&callbacks);
     nghttp2_session_callbacks_set_send_callback(callbacks, unit::server::callbacks::send_callback);
     // TODO: callbacks
+
     nghttp2_session_callbacks_set_on_header_callback(callbacks, unit::server::callbacks::on_header_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, unit::server::callbacks::on_frame_recv_callback);
+    nghttp2_session_callbacks_set_on_begin_headers_callback(callbacks, unit::server::callbacks::on_begin_headers_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks,
                                                               unit::server::callbacks::on_data_chunk_recv_callback);
     nghttp2_session_server_new(&(this->session), callbacks, this);
@@ -176,25 +179,25 @@ void HttpSession::do_read() {
 }
 
 void HttpSession::push_stream_data(int32_t stream_id, unsigned char *data) {
-    if (!this->full_data.contains(stream_id))
-        this->full_data.emplace_hint(this->full_data.begin(), stream_id,
-                                     unit::server::data::request{false, std::vector<unsigned char>(data, data + strlen(
+    if (!this->streams.contains(stream_id))
+        this->streams.emplace_hint(this->streams.begin(), stream_id,
+                                   unit::server::data::HttpRequest{false, std::vector<unsigned char>(data, data + strlen(
                                              reinterpret_cast<const char *>(data))), stream_id});
     else
-        this->full_data.at(stream_id).data.push_back(*data);
+        this->streams.at(stream_id).data.push_back(*data);
 }
 
-std::map<int32_t, unit::server::data::request>::const_iterator HttpSession::begin() const {
-    return this->full_data.begin();
+std::map<int32_t, unit::server::data::HttpRequest>::const_iterator HttpSession::begin() const {
+    return this->streams.begin();
 }
 
-std::map<int32_t, unit::server::data::request>::const_iterator HttpSession::end() const {
-    return this->full_data.end();
+std::map<int32_t, unit::server::data::HttpRequest>::const_iterator HttpSession::end() const {
+    return this->streams.end();
 }
 
-unit::server::data::request HttpSession::getUserDataByStream(int32_t stream_id) {
+unit::server::data::HttpRequest HttpSession::getUserDataByStream(int32_t stream_id) {
     try {
-        return this->full_data.at(stream_id);
+        return this->streams.at(stream_id);
     } catch (std::out_of_range &e) {
         BOOST_LOG_TRIVIAL(error) << e.what();
         throw StreamNotFound("There is no stream with provided stream_id");
@@ -203,7 +206,7 @@ unit::server::data::request HttpSession::getUserDataByStream(int32_t stream_id) 
 
 void HttpSession::setDataFinishedByStream(int32_t stream_id, bool value) {
     try {
-        this->full_data.at(stream_id).isFinished = value;
+        this->streams.at(stream_id).setIsFinished(value);
     } catch (std::out_of_range &e) {
         BOOST_LOG_TRIVIAL(error) << e.what();
         throw StreamNotFound("There is no stream with provided stream_id");
@@ -211,13 +214,13 @@ void HttpSession::setDataFinishedByStream(int32_t stream_id, bool value) {
 }
 
 void HttpSession::eraseData(int32_t stream) {
-    this->full_data.erase(stream);
+    this->streams.erase(stream);
 }
 
 void HttpSession::setHeaders(int32_t stream_id, const std::string &header, const std::string &header_value) {
     try {
         this->pushEmptyUserData(stream_id);
-        this->full_data.at(stream_id).headers[header] = header_value;
+        this->streams.at(stream_id).headers[header] = header_value;
     } catch (std::out_of_range &e) {
         BOOST_LOG_TRIVIAL(error) << e.what();
         throw StreamNotFound("There is no stream with provided stream_id");
@@ -225,15 +228,12 @@ void HttpSession::setHeaders(int32_t stream_id, const std::string &header, const
 }
 
 void HttpSession::pushEmptyUserData(int32_t stream_id) {
-    this->full_data.try_emplace(this->full_data.begin(), stream_id, unit::server::data::request(stream_id));
+    this->streams.try_emplace(this->streams.begin(), stream_id, unit::server::data::HttpRequest(stream_id));
 }
 
-unit::server::data::response::response(int32_t stream_id) : stream_id(stream_id) {}
-
 void unit::server::callbacks::send_response(nghttp2_session *session, int32_t stream_id,
-                                            unit::server::data::response *data) {
-    nghttp2_data_provider provider{};
-    provider.source.fd = 0;
+                                            unit::server::data::HttpResponse *data) {
+    nghttp2_data_provider provider;
     provider.source.ptr = data;
     provider.read_callback = unit::server::callbacks::data_provider_callback;
 
@@ -260,36 +260,64 @@ void unit::server::callbacks::send_response(nghttp2_session *session, int32_t st
 ssize_t unit::server::callbacks::data_provider_callback(nghttp2_session *session, int32_t stream_id,
                                                         uint8_t *buf, size_t length, uint32_t *data_flags,
                                                         nghttp2_data_source *source, void *user_data) {
-    auto *data = static_cast<unit::server::data::response *>(user_data);  // Cast user_data back to the expected type
-    size_t data_len = data->json_response.size();  // Calculate the length of the data
+    (void)session;
+    (void)stream_id;
+    auto *data = static_cast<unit::server::data::HttpResponse *>(source->ptr);
 
-    // Determine the amount of data to send in this callback invocation
-    size_t copy_len = data_len < length ? data_len : length;
+    // Проверяем, есть ли еще данные для отправки
+    if (data->read_offset >= data->json_response.size()) {
+        *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+        return 0; // Все данные отправлены
+    }
 
-    // Copy the data from the user_data to the provided buffer
-    memcpy(buf, data->json_response.c_str(), copy_len);
+    // Вычисляем, сколько данных можно скопировать в этом вызове
+    size_t data_left = data->json_response.size() - data->read_offset;
+    size_t copy_len = (data_left < length) ? data_left : length;
 
-    // Decrease remaining length of the data
-    data += copy_len;
-    data_len -= copy_len;
+    // Копируем данные в буфер
+    memcpy(buf, data->json_response.data() + data->read_offset, copy_len);
+    data->read_offset += copy_len; // Обновляем смещение
 
-    // Save the new pointer position and the remaining data length back into user_data
-    user_data = data;
-
-    // If there is no more data to send, set the NGHTTP2_DATA_FLAG_EOF flag
-    if (data_len == 0) {
+    // Проверяем, достигли ли мы конца данных
+    if (data->read_offset >= data->json_response.size()) {
         *data_flags |= NGHTTP2_DATA_FLAG_EOF;
     }
-    // Return the number of bytes we have copied into buf
-    return static_cast<ssize_t>(copy_len);
+
+    return static_cast<ssize_t>(copy_len); // Возвращаем количество скопированных байт
 }
+
+//static ssize_t unit::server::callbacks::send_callback(nghttp2_session *session, const uint8_t *data,
+//                                                      size_t length, int flags, void *user_data) {
+//    auto *session_data = static_cast<HttpSession *>(user_data);
+//    BOOST_LOG_TRIVIAL(info) << "data: " << data;
+//    BOOST_LOG_TRIVIAL(info) << "length: " << length;
+//    session_data->ssl_socket->async_write_some(boost::asio::buffer(data, length), unit::server::callbacks::write_handler);  // Исправлено количество байт
+//    return (ssize_t) length;
+//}
 
 static ssize_t unit::server::callbacks::send_callback(nghttp2_session *session, const uint8_t *data,
                                                       size_t length, int flags, void *user_data) {
     auto *session_data = static_cast<HttpSession *>(user_data);
-    BOOST_LOG_TRIVIAL(info) << data;
-    session_data->ssl_socket->async_write_some(boost::asio::buffer(data, strlen(reinterpret_cast<const char *>(data))), unit::server::callbacks::write_handler);
-    return (ssize_t) length;
+
+    if (length == 0) {
+        BOOST_LOG_TRIVIAL(error) << "send_callback called with empty data";
+        return 0;
+    }
+
+    // Логируем размер отправляемых данных
+    BOOST_LOG_TRIVIAL(info) << "Sending data of length: " << length;
+
+    // Отправляем данные через сокет
+    boost::system::error_code ec;
+    data = reinterpret_cast<const uint8_t *>("test");
+    session_data->ssl_socket->async_write_some(boost::asio::buffer(data, length), unit::server::callbacks::write_handler);
+
+    if (ec) {
+        BOOST_LOG_TRIVIAL(error) << "Write error: " << ec.message();
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+
+    return static_cast<ssize_t>(length);
 }
 
 void unit::server::callbacks::write_handler(const boost::system::error_code& error, std::size_t bytes_transferred) {
@@ -298,4 +326,32 @@ void unit::server::callbacks::write_handler(const boost::system::error_code& err
     } else {
         BOOST_LOG_TRIVIAL(error) << "Write failed: " << error.message();
     }
+}
+
+int unit::server::callbacks::on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
+                                    uint32_t error_code, void *user_data) {
+    auto *httpSession = static_cast<HttpSession *>(user_data);
+    if (!httpSession) {
+        return 0;
+    }
+    httpSession->streams.erase(stream_id);
+}
+
+int unit::server::settings::send_server_connection_header(nghttp2_session *session) {
+    nghttp2_settings_entry iv[1] = {
+            {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100}};
+    int rv;
+
+    rv = nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, iv,
+                                 ARRLEN(iv));
+    if (rv != 0) {
+        BOOST_LOG_TRIVIAL(info) << nghttp2_strerror(rv);
+        return -1;
+    }
+    return 0;
+}
+
+int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data) {
+    unit::server::settings::send_server_connection_header(session);
+    return 0;
 }
