@@ -63,6 +63,7 @@ namespace unit::server {
 
         void write_handler(const boost::system::error_code &error, std::size_t bytes_transferred);
 
+        static int on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data);
     } // callbacks
     namespace settings {
         static int send_server_connection_header(nghttp2_session *session);

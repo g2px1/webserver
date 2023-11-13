@@ -34,7 +34,7 @@ unit::server::callbacks::on_frame_recv_callback(nghttp2_session *session, const 
         int32_t stream_id = frame->hd.stream_id;
 
         auto *user_session = static_cast<HttpSession *>(user_data);
-        user_session->setDataFinishedByStream(stream_id, true);
+//        user_session->setDataFinishedByStream(stream_id, true);
         auto *res = new unit::server::data::HttpResponse(stream_id);
         res->json_response = R"({"test":"test"})";
         send_response(session, stream_id, res);
@@ -47,10 +47,10 @@ unit::server::callbacks::on_frame_recv_callback(nghttp2_session *session, const 
         }
 #endif
 #if DEBUG_FRAME_CALLBACK
-        for (auto &[key, value]: *user_session) {
-            std::cout << key << ": " << std::string((char *) value.data.data(), value.data.size()) << ", isFinished: "
-                      << value.isFinished << '\n';
-        }
+//        for (auto &[key, value]: *user_session) {
+//            std::cout << key << ": " << std::string((char *) value.data.data(), value.data.size()) << ", isFinished: "
+//                      << value.isFinished << '\n';
+//        }
         for (auto &[key, value]: *user_session) {
             for (auto &[k, v] : value.headers) {
                 std::cout << "header: " << k << ", header value: " << v << '\n';
@@ -82,7 +82,7 @@ HttpSession::HttpSession(boost::asio::ip::tcp::socket socket, const std::string 
     nghttp2_session_callbacks_new(&callbacks);
     nghttp2_session_callbacks_set_send_callback(callbacks, unit::server::callbacks::send_callback);
     // TODO: callbacks
-
+    nghttp2_session_callbacks_set_on_begin_headers_callback(callbacks, unit::server::callbacks::on_begin_headers_callback);
     nghttp2_session_callbacks_set_on_header_callback(callbacks, unit::server::callbacks::on_header_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, unit::server::callbacks::on_frame_recv_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks,
@@ -139,6 +139,7 @@ void HttpSession::do_handshake() {
                                                                 << std::string((const char *) alpn_protocol, alpn_len);
 #endif
                                     }
+                                    unit::server::settings::send_server_connection_header(this->session);
                                     do_read();
                                 });
 }
@@ -234,7 +235,6 @@ void unit::server::callbacks::send_response(nghttp2_session *session, int32_t st
 
     nghttp2_nv headers[] = {
             MAKE_NV(":status", "200"),
-            MAKE_NV("content-type", "application/json")
     };
 
     // Submit the response
@@ -243,9 +243,12 @@ void unit::server::callbacks::send_response(nghttp2_session *session, int32_t st
     // Check rv for errors and handle appropriately
     // Assuming rv == 0 for successful submission
     if (rv == 0) {
-        nghttp2_session_send(session);
+        rv = nghttp2_session_send(session);
+        if (rv != 0) {
+            BOOST_LOG_TRIVIAL(error) << "send_response `nghttp2_session_send`: " << nghttp2_strerror(rv);
+        }
     } else {
-        BOOST_LOG_TRIVIAL(error) << nghttp2_strerror(rv);
+        BOOST_LOG_TRIVIAL(error) << "send_response `nghttp2_submit_response`: " << nghttp2_strerror(rv);
     }
 }
 
@@ -291,18 +294,17 @@ static ssize_t unit::server::callbacks::send_callback(nghttp2_session *session, 
                                                       size_t length, int flags, void *user_data) {
     auto *session_data = static_cast<HttpSession *>(user_data);
 
-    if (length == 0) {
-        BOOST_LOG_TRIVIAL(error) << "send_callback called with empty data";
-        return 0;
+    for (int i = 0; i < length; i++) {
+        std::cout << std::hex << (int) data[i] << " ";
     }
+    std::cout << '\n';
 
-    // Логируем размер отправляемых данных
     BOOST_LOG_TRIVIAL(info) << "Sending data of length: " << length;
 
-    // Отправляем данные через сокет
     boost::system::error_code ec;
-    session_data->ssl_socket->async_write_some(boost::asio::buffer(data, length),
-                                               unit::server::callbacks::write_handler);
+//    session_data->ssl_socket->async_write_some(boost::asio::buffer(data, length),
+//                                               unit::server::callbacks::write_handler);
+    session_data->ssl_socket->write_some(boost::asio::buffer(data, length), ec);
 
     if (ec) {
         BOOST_LOG_TRIVIAL(error) << "Write error: " << ec.message();
@@ -337,8 +339,18 @@ int unit::server::settings::send_server_connection_header(nghttp2_session *sessi
     rv = nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, iv,
                                  ARRLEN(iv));
     if (rv != 0) {
-        BOOST_LOG_TRIVIAL(info) << nghttp2_strerror(rv);
+        BOOST_LOG_TRIVIAL(error) << nghttp2_strerror(rv);
         return -1;
     }
+    rv = nghttp2_session_send(session);
+    if (rv != 0) {
+        BOOST_LOG_TRIVIAL(error) << nghttp2_strerror(rv);
+        return -1;
+    }
+    return 0;
+}
+
+int unit::server::callbacks::on_begin_headers_callback(nghttp2_session *session, const nghttp2_frame *frame, void *user_data) {
+    nghttp2_session_set_stream_user_data(session, frame->hd.stream_id, user_data);
     return 0;
 }
