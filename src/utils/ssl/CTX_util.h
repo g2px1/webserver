@@ -18,19 +18,6 @@ constexpr char DEFAULT_CIPHER_LIST[] =
         "POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-"
         "AES256-GCM-SHA384";
 
-//constexpr unsigned char NGHTTP2_H2_ALPN[] = {2, 'h', '2'};
-//constexpr unsigned char NGHTTP2_H2_16_ALPN[] = {5, 'h', '2', '-', '1', '6'};
-//constexpr unsigned char NGHTTP2_H2_14_ALPN[] = {5, 'h', '2', '-', '1', '4'};
-//
-//std::vector<unsigned char> alpn_token;
-//
-//void initialize_alpn_token() {
-//    alpn_token.reserve(sizeof(NGHTTP2_H2_ALPN) + sizeof(NGHTTP2_H2_16_ALPN) + sizeof(NGHTTP2_H2_14_ALPN));
-//    alpn_token.insert(alpn_token.end(), std::begin(NGHTTP2_H2_ALPN), std::end(NGHTTP2_H2_ALPN));
-//    alpn_token.insert(alpn_token.end(), std::begin(NGHTTP2_H2_16_ALPN), std::end(NGHTTP2_H2_16_ALPN));
-//    alpn_token.insert(alpn_token.end(), std::begin(NGHTTP2_H2_14_ALPN), std::end(NGHTTP2_H2_14_ALPN));
-//}
-
 constexpr unsigned char ALPN_COMBINED[] = {
         2, 'h', '2',
         5, 'h', '2', '-', '1', '6',
@@ -106,7 +93,7 @@ static void create_ssl_ctx(boost::asio::ssl::context &ctx, const char *key_file,
     // ALPN selection callback
     SSL_CTX_set_alpn_select_cb(ctx.native_handle(), alpn_select_proto_cb, nullptr);
 #endif // OPENSSL_VERSION_NUMBER >= 0x10002000L
-    BOOST_LOG_TRIVIAL(info) << "success";
+    BOOST_LOG_TRIVIAL(info) << "`SSL` success";
 }
 
 #endif //TCPSOCKETTEST_CTX_UTIL_H

@@ -4,6 +4,8 @@
 
 #include "HttpRequest.h"
 
+#include <boost/log/trivial.hpp>
+
 unit::server::data::HttpRequest::HttpRequest(bool isFinished, const std::vector<unsigned char> &data, int32_t stream_id)
         : finalized(isFinished), data(data), stream_id(stream_id) {}
 
@@ -19,6 +21,10 @@ void unit::server::data::HttpRequest::setIsFinished(bool isFinished) {
 
 const std::vector<unsigned char> &unit::server::data::HttpRequest::getData() {
     return data;
+}
+
+void unit::server::data::HttpRequest::parseUrl(const std::string& url) {
+    this->url = {url};
 }
 
 bool unit::server::data::HttpRequest::isFinished() const {

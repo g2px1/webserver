@@ -9,16 +9,15 @@
 #include <string>
 #include <utility>
 
-class StreamNotFound : public std::exception {
-private:
-    std::string message;
-
+class StreamNotFound final : public std::exception {
 public:
     // Constructor (C++11 onward)
     explicit StreamNotFound(std::string msg) : message(std::move(msg)) {}
 
     // Override the what() method from the base class
     [[nodiscard]] const char* what() const noexcept override;
+private:
+    std::string message;
 };
 
 #endif //TCPSOCKETTEST_HTTPSESSIONEXCEPTION_H
