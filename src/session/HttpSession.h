@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <map>
+#include <array>
 #include "boost/asio.hpp"
 #include "openssl/ssl.h"
 #include "boost/asio/ssl.hpp"
@@ -17,6 +18,10 @@
 #include "data/HttpRequest.h"
 #include "data/TestHttpResponse.h"
 #include "data/HttpResponse.h"
+#include "data/types.h"
+#include "path/pathUtil.h"
+#include "handler/BasicEndpointHandler.h"
+#include "request/requestTypesStr.h"
 
 #ifdef __linux__
 #include <sstream>
@@ -36,34 +41,6 @@
 #define ARRLEN(x) (sizeof(x) / sizeof(x[0]))
 
 namespace unit::server {
-    namespace request {
-        enum type {
-            GET = 0,
-            POST = 1,
-            HEAD = 2,
-            PUT = 3,
-            DELETE = 4,
-            CONNECT = 5,
-            OPTIONS = 6,
-            TRACE = 7,
-            PATCH = 8
-        };
-    }; // request
-    namespace requestHandlerKey {
-        using RequestKey = std::pair<std::string, request::type>;
-
-        struct RequestKeyHash {
-            std::size_t operator()(const RequestKey&k) const {
-                return std::hash<std::string>()(k.first) ^ std::hash<int>()(static_cast<int>(k.second));
-            }
-        };
-
-        struct RequestKeyEqual {
-            bool operator()(const RequestKey&lhs, const RequestKey&rhs) const {
-                return lhs.first == rhs.first && lhs.second == rhs.second;
-            }
-        };
-    }; // requestHandlerKey
     namespace callbacks {
         static int on_header_callback(nghttp2_session* session, const nghttp2_frame* frame, const uint8_t* name,
                                       size_t namelen, const uint8_t* value, size_t valuelen, uint8_t flags,
@@ -85,6 +62,12 @@ namespace unit::server {
         ssize_t data_provider_callback(nghttp2_session* session, int32_t stream_id, uint8_t* buf, size_t length,
                                        uint32_t* data_flags, nghttp2_data_source* source, void* user_data);
 
+        ssize_t raw_data_provider_callback(nghttp2_session* session, int32_t stream_id, uint8_t* buf, size_t length,
+                                       uint32_t* data_flags, nghttp2_data_source* source, void* user_data);
+
+        ssize_t fd_provider_callback(nghttp2_session* session, int32_t stream_id, uint8_t* buf, size_t length,
+                                       uint32_t* data_flags, nghttp2_data_source* source, void* user_data);
+
         static ssize_t
         send_callback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data);
 
@@ -97,7 +80,7 @@ namespace unit::server {
     } // settings
 
     namespace utils {
-        void send_response(nghttp2_session* session, int32_t stream_id, unit::server::data::TestHttpResponse* data);
+        void send_response(nghttp2_session* session, int32_t stream_id, data::HttpResponse* data);
 
         static int submit_data(nghttp2_session* session, int32_t stream_id, nghttp2_nv* headers);
 
@@ -108,7 +91,9 @@ namespace unit::server {
 class HttpSession : public std::enable_shared_from_this<HttpSession> {
 public:
     explicit HttpSession(boost::asio::ip::tcp::socket socket, const std::string&key_file,
-                         const std::string&cert_file);
+                         const std::string&cert_file,
+                         const std::shared_ptr<unit::server::regex::basic::BasicEndpointHandler>&endpoint_handler,
+                         const std::shared_ptr<unit::server::request::RequestTypeStr>&req);
 
     virtual ~HttpSession();
 
@@ -139,11 +124,11 @@ public:
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_socket;
     std::map<int32_t, unit::server::data::HttpRequest> streams;
+    const std::shared_ptr<unit::server::regex::basic::BasicEndpointHandler> endpoint_handler;
+    std::shared_ptr<unit::server::request::RequestTypeStr> req_str;
 
 private:
-    nghttp2_session* session;
-
-public:
+    nghttp2_session* session{};
     std::string key_file_path;
     std::string cert_file_path;
 };

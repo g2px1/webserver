@@ -47,6 +47,13 @@ add_executable(tcpSocketTest main.cpp
         utils/toml/toml.cpp
         utils/configuration/ConfigReader.cpp
         utils/configuration/ConfigReader.h
+        utils/path/pathUtil.h
+        server/handler/EndpointHandler.h
+        server/handler/BasicEndpointHandler.cpp
+        server/handler/BasicEndpointHandler.h
+        server/data/types.h
+        utils/request/requestTypesStr.h
+        utils/request/requestTypeStr.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}

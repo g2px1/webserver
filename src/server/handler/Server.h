@@ -10,6 +10,7 @@
 #include "SessionManager.h"
 #include "configuration/ConfigReader.h"
 #include "data/HttpRequest.h"
+#include "BasicEndpointHandler.h"
 
 namespace unit::server {
     namespace handler {
@@ -17,15 +18,17 @@ namespace unit::server {
         public:
             explicit Server(const std::string&config_path);
 
-            void handle(request::type request_type, const std::string &endpoint, std::function<void (configuration::ConfigReader &, data::HttpRequest &, data::HttpResponse &)> function);
+            void handle(request::type request_type, const std::string&endpoint,
+                        const std::function<void (data::HttpRequest&, data::HttpResponse&)>& function);
 
             [[noreturn]] void start();
 
-        private:
+        public:
             configuration::ConfigReader config;
+
+        private:
             std::vector<std::thread> iocs;
-            std::unordered_map<requestHandlerKey::RequestKey, std::function<void (configuration::ConfigReader &, data::HttpRequest &, data::HttpResponse &)>,
-                requestHandlerKey::RequestKeyHash, requestHandlerKey::RequestKeyEqual> handlers;
+            regex::basic::BasicEndpointHandler endpoint_handler;
         };
     }; // handler
 }; // unit::server

@@ -20,7 +20,8 @@ bool unit::server::data::HttpResponse::writeJSON(const boost::json::value&res) {
         temp_buffer.insert(temp_buffer.end(), sv.data(), sv.data() + sv.size());
     }
 
-    this->data = std::move(temp_buffer);
+    this->data = std::make_shared<std::vector<uint8_t>>(std::move(temp_buffer));
+    this->type = BUFFER;
     return true;
 }
 
@@ -37,37 +38,61 @@ bool unit::server::data::HttpResponse::writeFile(const std::string&file_path) {
     this->data = fd;
     this->type = FD;
     return true;
-    // struct stat file_status;
-    // if (stat(file_path.c_str(), &file_status) < 0) {
-    //     return;
-    // }
-    //
-    // this->buffer.resize(file_status.st_size);
-    //
-    // ssize_t r = read(fd, this->buffer.data(), file_status.st_size);
-    //
-    // if (r == -1) {
-    //     BOOST_LOG_TRIVIAL(info) << "File not readed: " << errno;
-    // }
-    //
-    // for (auto&sym: this->buffer) {
-    //     std::cout << (char) sym;
-    // }
 }
 
 bool unit::server::data::HttpResponse::writeRawData(const uint8_t* buf, const size_t length) {
     if (this->type != NONE) {
         return false;
     }
-    this->data = std::vector<uint8_t>(buf, buf + length);
+    this->data = std::make_shared<std::vector<uint8_t>>(buf, buf + length);
+    this->type = BUFFER;
     return true;
 }
 
-const std::vector<uint8_t>& unit::server::data::HttpResponse::getBuffer() const {
-    if (std::holds_alternative<std::vector<uint8_t>>(data)) {
-        return std::get<std::vector<uint8_t>>(data);
+std::optional<std::shared_ptr<std::vector<uint8_t>>> unit::server::data::HttpResponse::getBuffer() const {
+    if (std::holds_alternative<std::shared_ptr<std::vector<uint8_t>>>(data)) {
+        return std::get<std::shared_ptr<std::vector<uint8_t>>>(data);
     } else {
-        static std::vector<uint8_t> empty_buffer;
-        return empty_buffer; // Return an empty buffer if the variant does not hold a buffer
+        return std::nullopt;
     }
+}
+
+int unit::server::data::HttpResponse::getFD() const {
+    if (std::holds_alternative<int>(this->data)) {
+        return std::get<int>(this->data);
+    } else {
+        return -1;
+    }
+}
+
+void unit::server::data::HttpResponse::addHeader(char *name, char *value) {
+    this->headers.push_back({(uint8_t *) name, (uint8_t*) value, std::strlen(name), std::strlen(value), NGHTTP2_NV_FLAG_NONE});
+}
+
+void unit::server::data::HttpResponse::addHeaders(const std::vector<std::pair<std::string, std::string>>& headers) {
+    for (auto &[header, value] : headers) {
+        this->headers.push_back(MAKE_NV(header.c_str(), value.c_str()));
+    }
+}
+
+void unit::server::data::HttpResponse::getReadOffset(const size_t read_offset) {
+    this->read_offset = read_offset;
+}
+
+nghttp2_nv unit::server::data::HttpResponse::make_nv(const char *name, const char *value) {
+    return {
+        (uint8_t *)(name),
+        (uint8_t *)(value),
+        strlen(name),
+        strlen(value),
+        NGHTTP2_NV_FLAG_NONE
+    };
+}
+
+std::vector<nghttp2_nv>& unit::server::data::HttpResponse::getHeaders() {
+    if (this->headers.empty()) {
+        this->headers.push_back(MAKE_NV(":status", "200"));
+        this->headers.push_back(MAKE_NV("content-type", "application/json"));
+    }
+    return this->headers;
 }

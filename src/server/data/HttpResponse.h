@@ -14,38 +14,58 @@
 #include <errno.h>
 #include "boost/json.hpp"
 #include "boost/log/trivial.hpp"
+#include "nghttp2/nghttp2.h"
 
 
 namespace unit::server {
+#define MAKE_NV(NAME, VALUE)                                                   \
+{                                                                            \
+    (uint8_t *)NAME, (uint8_t *)VALUE, sizeof(NAME) - 1, sizeof(VALUE) - 1,    \
+    NGHTTP2_NV_FLAG_NONE                                                   \
+}
+
     namespace data {
         enum DATA_TYPE {
             NONE = 0,
             BUFFER = 1,
             FD = 2
         };
+
         class HttpResponse {
             friend class HttpSession;
 
         public:
             explicit HttpResponse(int32_t stream_id);
 
-            bool writeJSON(const boost::json::value &res);
+            bool writeJSON(const boost::json::value&res);
 
             bool writeFile(const std::string&file_path);
 
-            bool writeRawData(const uint8_t *buf, size_t length);
+            bool writeRawData(const uint8_t* buf, size_t length);
 
-            [[nodiscard]] const std::vector<uint8_t>& getBuffer() const;
+            [[nodiscard]] std::optional<std::shared_ptr<std::vector<uint8_t>>> getBuffer() const;
+
+            void getReadOffset(size_t read_offset);
+
+            int getFD() const;
+
+            void addHeader(char *name, char *value);
+
+            void addHeaders(const std::vector<std::pair<std::string, std::string>>&headers);
+
+            std::vector<nghttp2_nv>& getHeaders();
 
         private:
-            // union {
-            //     std::vector<uint8_t> buffer;
-            //     int fd;
-            // };
-            std::variant<std::vector<uint8_t>, int> data;
-            size_t read_offset = 0;
-            const int32_t stream_id;
+            static nghttp2_nv make_nv(const char *name, const char *value);
+
+        public:
             DATA_TYPE type = NONE;
+            size_t read_offset = 0;
+
+        private:
+            std::variant<std::shared_ptr<std::vector<uint8_t>>, int> data;
+            std::vector<nghttp2_nv> headers;
+            const int32_t stream_id;
         };
     }; // data
 }

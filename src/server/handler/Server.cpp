@@ -9,9 +9,10 @@
 unit::server::handler::Server::Server(const std::string&config_path) : config(config_path) {
 }
 
-void unit::server::handler::Server::handle(request::type request_type, const std::string &endpoint,
-                                           std::function<void (configuration::ConfigReader &, data::HttpRequest &, data::HttpResponse &)> function) {
-    this->handlers[{endpoint, request_type}] = std::move(function);
+void unit::server::handler::Server::handle(const request::type request_type, const std::string&endpoint,
+                                           const std::function<void (data::HttpRequest&,
+                                                                     data::HttpResponse&)>&function) {
+    this->endpoint_handler.addHandler(request_type, std::regex(endpoint), function);
 }
 
 void unit::server::handler::Server::start() {
@@ -19,7 +20,10 @@ void unit::server::handler::Server::start() {
         boost::asio::io_context io_context;
         boost::asio::ip::tcp::acceptor acceptor(
             io_context, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), this->config.getPort()));
-        SessionManager manager = SessionManager(this->config.getKeyFilePath(), this->config.getPemFilePath());
+        manager::SessionManager manager = manager::SessionManager(this->config.getKeyFilePath(),
+                                                                  this->config.getPemFilePath(),
+                                                                  std::shared_ptr<regex::basic::BasicEndpointHandler>(
+                                                                      &this->endpoint_handler));
         std::function<void()> do_accept;
         do_accept = [&]() {
             auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);

@@ -12,13 +12,14 @@ unit::server::callbacks::on_header_callback(nghttp2_session* session, const nght
     std::cout << "Header: " << std::string((char *) name, namelen) << ": " << std::string((char *) value, valuelen)
               << std::endl;
 #endif
-    auto ssl_session = static_cast<HttpSession *>(user_data);
-    int32_t stream_id = frame->hd.stream_id;
+    const auto ssl_session = static_cast<HttpSession *>(user_data);
+    const int32_t stream_id = frame->hd.stream_id;
     try {
-        auto header = std::string((char *)name, namelen);
-        auto header_value = std::string((char *)value, valuelen);
+        const auto header = std::string((char *)name, namelen);
+        const auto header_value = std::string((char *)value, valuelen);
         ssl_session->setHeaders(stream_id, header, header_value);
-        if (stream_id != 0 && header[0] == ':' && header[1] == 'p') [[unlikely]] {
+        if (stream_id != 0 && header[0] == ':' && header[1] == 'p') [[unlikely]]
+        {
             ssl_session->streams.at(stream_id).parseUrl(header_value);
         }
     }
@@ -38,21 +39,29 @@ unit::server::callbacks::on_frame_recv_callback(nghttp2_session* session, const 
 #endif
     int32_t stream_id = frame->hd.stream_id;
 #if DEBUG_RESPONSE_EMULATION
-    auto* user_session = static_cast<HttpSession *>(user_data);
+    auto* ssl_session = static_cast<HttpSession *>(user_data);
     if (stream_id != 0) {
         if (frame->hd.flags == NGHTTP2_DATA_FLAG_EOF) {
-            user_session->setDataFinishedByStream(stream_id, true);
-            BOOST_LOG_TRIVIAL(info) << user_session->getUserDataByStream(stream_id).url.query();
+            ssl_session->setDataFinishedByStream(stream_id, true);
         }
-        auto res = std::make_shared<data::TestHttpResponse>(stream_id);
-        res->json_response = R"({"test":"test"})";
-        utils::send_response(session, stream_id, res.get());
+
+        auto httpRes = std::make_shared<data::HttpResponse>(stream_id);
+        auto request = ssl_session->streams.at(stream_id);
+        auto test = ssl_session->endpoint_handler->match(ssl_session->req_str->getType(request.headers.at(":method")),
+                                                         request.headers.at(":path"));
+        if (test.has_value()) {
+            test.value()(request, *httpRes);
+            utils::send_response(session, stream_id, httpRes.get());
+        }
+        else {
+            // TODO: return error response (400)
+        }
     }
 #endif
     if (frame->hd.flags == NGHTTP2_FLAG_END_STREAM) {
 #if DEBUG_HEADERS
         std::cout << "Headers: " << '\n';
-        for (auto &[key, value]: *user_session) {
+        for (auto &[key, value]: *ssl_session) {
             for (auto &[k, v]: value.headers) {
                 std::cout << k << " : " << v << '\n';
             }
@@ -74,7 +83,7 @@ unit::server::callbacks::on_frame_recv_callback(nghttp2_session* session, const 
 }
 
 int unit::server::callbacks::on_data_chunk_recv_callback(nghttp2_session* session, uint8_t flags,
-                                                         int32_t stream_id, const uint8_t* data,
+                                                         const int32_t stream_id, const uint8_t* data,
                                                          size_t len, void* user_data) {
     auto* user_session = static_cast<HttpSession *>(user_data);
     BOOST_LOG_TRIVIAL(info) << "`on_data_chunk_recv_callback` stream_id: " << stream_id;
@@ -85,8 +94,11 @@ int unit::server::callbacks::on_data_chunk_recv_callback(nghttp2_session* sessio
     return 0;
 }
 
-HttpSession::HttpSession(boost::asio::ip::tcp::socket socket, const std::string&key_file, const std::string&cert_file)
-    : socket_(std::move(socket)), key_file_path(key_file), cert_file_path(cert_file) {
+HttpSession::HttpSession(boost::asio::ip::tcp::socket socket, const std::string&key_file, const std::string&cert_file,
+                         const std::shared_ptr<unit::server::regex::basic::BasicEndpointHandler>&endpoint_handler,
+                         const std::shared_ptr<unit::server::request::RequestTypeStr>&req)
+    : socket_(std::move(socket)), key_file_path(key_file), cert_file_path(cert_file),
+      endpoint_handler(endpoint_handler), req_str(req) {
     nghttp2_session_callbacks* callbacks;
     nghttp2_session_callbacks_new(&callbacks);
     nghttp2_session_callbacks_set_send_callback(callbacks, unit::server::callbacks::send_callback);
@@ -239,23 +251,63 @@ void HttpSession::setHeaders(int32_t stream_id, const std::string&header, const 
     }
 }
 
-void HttpSession::pushEmptyUserData(int32_t stream_id) {
+void HttpSession::pushEmptyUserData(const int32_t stream_id) {
     this->streams.try_emplace(this->streams.begin(), stream_id, unit::server::data::HttpRequest(stream_id));
 }
 
-void unit::server::utils::send_response(nghttp2_session* session, int32_t stream_id,
-                                        unit::server::data::TestHttpResponse* data) {
+ssize_t unit::server::callbacks::raw_data_provider_callback(nghttp2_session* session, int32_t stream_id, uint8_t* buf, size_t length,
+                                       uint32_t* data_flags, nghttp2_data_source* source, void* user_data) {
+    (void)session;
+    (void)stream_id;
+    auto* data = static_cast<unit::server::data::HttpResponse *>(source->ptr);
+
+    if (data->type == unit::server::data::BUFFER) {
+        auto buffer = data->getBuffer();
+        if (buffer.has_value()) {
+            // Проверяем, есть ли еще данные для отправки
+            if (data->read_offset >= buffer->get()->size()) {
+                *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+                return 0; // Все данные отправлены
+            }
+
+            // Вычисляем, сколько данных можно скопировать в этом вызове
+            size_t data_left = buffer->get()->size() - data->read_offset;
+            size_t copy_len = (data_left < length) ? data_left : length;
+
+            // Копируем данные в буфер
+            memcpy(buf, buffer->get()->data() + data->read_offset, copy_len);
+            data->read_offset += copy_len; // Обновляем смещение
+
+            // Проверяем, достигли ли мы конца данных
+            if (data->read_offset >= buffer->get()->size()) {
+                *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+            }
+            return static_cast<ssize_t>(copy_len); // Возвращаем количество скопированных байт
+        }
+    } else {
+        const int fd = data->getFD();
+        if (fd < 0) {}
+        ssize_t r;
+        while ((r = read(fd, buf, length)) == -1 && errno == EINTR){}
+
+        if (r == -1) {
+            return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+        }
+        if (r == 0) {
+            *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+        }
+        return r;
+    }
+}
+
+void unit::server::utils::send_response(nghttp2_session* session, int32_t stream_id, data::HttpResponse* data) {
     nghttp2_data_provider provider;
     provider.source.ptr = data;
-    provider.read_callback = unit::server::callbacks::data_provider_callback;
+    provider.read_callback = callbacks::raw_data_provider_callback;
 
-    nghttp2_nv headers[] = {MAKE_NV(":status", "200"), MAKE_NV("content-type", "application/json")};
+    std::vector<nghttp2_nv> headers = data->getHeaders();
+    int rv = nghttp2_submit_response(session, stream_id, headers.data(), headers.size(), &provider);
 
-    // Submit the response
-    int rv = nghttp2_submit_response(session, stream_id, headers, ARRLEN(headers), &provider);
-
-    // Check rv for errors and handle appropriately
-    // Assuming rv == 0 for successful submission
     if (rv == 0) {
         rv = nghttp2_session_send(session);
         if (rv != 0) {
@@ -299,7 +351,7 @@ ssize_t unit::server::callbacks::data_provider_callback(nghttp2_session* session
 
 static ssize_t unit::server::callbacks::send_callback(nghttp2_session* session, const uint8_t* data,
                                                       size_t length, int flags, void* user_data) {
-    auto* session_data = static_cast<HttpSession *>(user_data);
+    const auto* session_data = static_cast<HttpSession *>(user_data);
 #if DEBUG_SOCKET_WRITING
     BOOST_LOG_TRIVIAL(info) << "Sending data of length: " << length;
 #endif
@@ -329,23 +381,24 @@ void unit::server::callbacks::write_handler(const boost::system::error_code&erro
     }
 }
 
-int unit::server::callbacks::on_stream_close_callback(nghttp2_session* session, int32_t stream_id,
+int unit::server::callbacks::on_stream_close_callback(nghttp2_session* session, const int32_t stream_id,
                                                       uint32_t error_code, void* user_data) {
     auto* httpSession = static_cast<HttpSession *>(user_data);
     if (!httpSession) {
         return 0;
     }
+    if (stream_id == 1) {
+        // TODO: delete from SessionManager
+    }
     httpSession->streams.erase(stream_id);
+    return 0;
 }
 
 int unit::server::settings::send_server_connection_header(nghttp2_session* session) {
     nghttp2_settings_entry iv[1] = {
         {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100}
     };
-    int rv;
-
-    rv = nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, iv,
-                                 ARRLEN(iv));
+    int rv = nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, iv, std::size(iv));
     if (rv != 0) {
         BOOST_LOG_TRIVIAL(error) << "`settings`: " << nghttp2_strerror(rv);
         return -1;
