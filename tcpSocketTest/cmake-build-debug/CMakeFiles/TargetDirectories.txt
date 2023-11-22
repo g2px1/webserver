@@ -1,0 +1,3 @@
+/Users/kirillzhukov/CLionProjects/tcpSocketTest/cmake-build-debug/CMakeFiles/tcpSocketTest.dir
+/Users/kirillzhukov/CLionProjects/tcpSocketTest/cmake-build-debug/CMakeFiles/edit_cache.dir
+/Users/kirillzhukov/CLionProjects/tcpSocketTest/cmake-build-debug/CMakeFiles/rebuild_cache.dir
